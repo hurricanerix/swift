@@ -48,6 +48,7 @@ post -m quota-bytes:
 
 from swift.common.swob import HTTPForbidden, HTTPRequestEntityTooLarge, \
     HTTPBadRequest, wsgify
+from swift.common.utils import register_swift_info
 from swift.proxy.controllers.base import get_account_info, get_object_info
 
 
@@ -58,6 +59,8 @@ class AccountQuotaMiddleware(object):
 
     """
     def __init__(self, app, *args, **kwargs):
+        register_swift_info('account_quotas')
+
         self.app = app
 
     @wsgify

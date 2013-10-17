@@ -28,7 +28,7 @@ from swift.common.swob import HTTPBadRequest, HTTPForbidden, HTTPNotFound, \
 
 from swift.common.middleware.acl import clean_acl, parse_acl, referrer_allowed
 from swift.common.utils import cache_from_env, get_logger, \
-    split_path, config_true_value
+    split_path, config_true_value, register_swift_info
 
 
 class TempAuth(object):
@@ -66,6 +66,7 @@ class TempAuth(object):
     """
 
     def __init__(self, app, conf):
+        register_swift_info('tempauth')
         self.app = app
         self.conf = conf
         self.logger = get_logger(conf, log_route='tempauth')

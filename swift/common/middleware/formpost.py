@@ -110,7 +110,7 @@ from time import time
 from urllib import quote
 
 from swift.common.middleware.tempurl import get_tempurl_keys_from_metadata
-from swift.common.utils import streq_const_time
+from swift.common.utils import streq_const_time, register_swift_info
 from swift.common.wsgi import make_pre_authed_env
 from swift.common.swob import HTTPUnauthorized
 from swift.proxy.controllers.base import get_account_info
@@ -162,6 +162,7 @@ def _parse_attrs(header):
 class _IterRequestsFileLikeObject(object):
 
     def __init__(self, wsgi_input, boundary, input_buffer):
+        register_swift_info('formpost')
         self.no_more_data_for_this_file = False
         self.no_more_files = False
         self.wsgi_input = wsgi_input

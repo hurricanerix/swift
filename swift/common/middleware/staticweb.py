@@ -120,7 +120,7 @@ import cgi
 import time
 
 from swift.common.utils import human_readable, split_path, config_true_value, \
-    json, quote, get_valid_utf8_str
+    json, quote, get_valid_utf8_str, register_swift_info
 from swift.common.wsgi import make_pre_authed_env, WSGIContext
 from swift.common.http import is_success, is_redirection, HTTP_NOT_FOUND
 from swift.common.swob import Response, HTTPMovedPermanently, HTTPNotFound
@@ -139,6 +139,7 @@ class _StaticWebContext(WSGIContext):
     """
 
     def __init__(self, staticweb, version, account, container, obj):
+        register_swift_info('staticweb')
         WSGIContext.__init__(self, staticweb.app)
         self.version = version
         self.account = account

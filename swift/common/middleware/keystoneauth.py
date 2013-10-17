@@ -15,6 +15,7 @@
 from swift.common import utils as swift_utils
 from swift.common.middleware import acl as swift_acl
 from swift.common.swob import HTTPNotFound, HTTPForbidden, HTTPUnauthorized
+from swift.common.utils import register_swift_info
 
 
 class KeystoneAuth(object):
@@ -71,6 +72,7 @@ class KeystoneAuth(object):
     :param conf: The dict of configuration values
     """
     def __init__(self, app, conf):
+        register_swift_info('keystoneauth')
         self.app = app
         self.conf = conf
         self.logger = swift_utils.get_logger(conf, log_route='keystoneauth')

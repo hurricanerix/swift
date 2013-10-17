@@ -36,6 +36,7 @@ import simplejson
 
 from test.unit import connect_tcp, readuntil2crlfs, FakeLogger, \
     fake_http_connect, FakeRing, FakeMemcache
+from swift.__init__ import __canonical_version__ as swift_version
 from swift.proxy import server as proxy_server
 from swift.account import server as account_server
 from swift.container import server as container_server
@@ -46,7 +47,7 @@ from swift.common.constraints import MAX_META_NAME_LENGTH, \
     MAX_META_VALUE_LENGTH, MAX_META_COUNT, MAX_META_OVERALL_SIZE, \
     MAX_FILE_SIZE, MAX_ACCOUNT_NAME_LENGTH, MAX_CONTAINER_NAME_LENGTH
 from swift.common import utils
-from swift.common.utils import mkdirs, normalize_timestamp, NullLogger
+from swift.common.utils import mkdirs, normalize_timestamp, NullLogger, json
 from swift.common.wsgi import monkey_patch_mimetools
 from swift.proxy.controllers.obj import SegmentedIterable
 from swift.proxy.controllers.base import get_container_memcache_key, \
@@ -232,6 +233,169 @@ def set_http_connect(*args, **kwargs):
 
 
 # tests
+class TestSwiftInfo(unittest.TestCase):
+
+    def setUp(self):
+        utils.swift_info = {'admin': {}}
+
+        self.got_statuses = []
+
+        self.account_ring = FakeRing()
+        self.container_ring = FakeRing()
+        self.memcache = FakeMemcache()
+
+        class FakeReq(object):
+            def __init__(self):
+                self.url = "/info"
+                self.method = "GET"
+
+            def as_referer(self):
+                return self.method + ' ' + self.url
+
+        self.account = 'some_account'
+        self.container = 'some_container'
+        self.request = FakeReq()
+        self.read_acl = 'read_acl'
+        self.write_acl = 'write_acl'
+
+        utils.register_swift_info('foo', foo='bar')
+
+    @classmethod
+    def tearDownClass(cls):
+        utils.swift_info = {'admin': {}}
+
+    def get_app(self, conf=None):
+        return proxy_server.Application(conf, self.memcache,
+                                        account_ring=self.account_ring,
+                                        container_ring=self.container_ring,
+                                        object_ring=FakeRing())
+        return self.app
+
+    def start_response(self, status, headers):
+        self.got_statuses.append(status)
+
+    def test_disabled_info(self):
+        req = Request.blank(
+            '/info', environ={'REQUEST_METHOD': 'GET'})
+        app = self.get_app({'expose_info': 'false'})
+        resp = app(req.environ, self.start_response)
+        self.assertEquals(['403 Forbidden'], self.got_statuses)
+        self.assertEqual(
+            '<html><h1>Forbidden</h1>'
+            '<p>Access was denied to this resource.</p></html>', resp[0])
+
+    def test_get_info(self):
+        req = Request.blank(
+            '/info', environ={'REQUEST_METHOD': 'GET'})
+        app = self.get_app({'expose_info': 'true'})
+        resp = app(req.environ, self.start_response)
+        self.assertEquals(['200 OK'], self.got_statuses)
+
+        info = json.loads(resp[0])
+        self.assertTrue('swift' in info)
+        self.assertTrue('version' in info['swift'])
+        self.assertEqual(info['swift']['version'], swift_version)
+
+    def test_disallow_info(self):
+        req = Request.blank(
+            '/info', environ={'REQUEST_METHOD': 'GET'})
+        app = self.get_app({'expose_info': 'true',
+                            'disallowed_sections': 'foo'})
+        resp = app(req.environ, self.start_response)
+        self.assertEquals(['200 OK'], self.got_statuses)
+
+        info = json.loads(resp[0])
+        self.assertTrue('swift' in info)
+        self.assertTrue('version' in info['swift'])
+        self.assertEqual(info['swift']['version'], swift_version)
+        self.assertTrue('foo' not in info)
+
+    def test_disabled_admin_info(self):
+        expires = int(time.time() + 86400)
+        sig = utils.get_hmac('GET', '/info', expires, '')
+        url = '/info?swiftinfo_sig={sig}&swiftinfo_expires={expires}'.format(
+            sig=sig, expires=expires)
+        req = Request.blank(url, environ={'REQUEST_METHOD': 'GET'})
+        app = self.get_app({'expose_info': 'true',
+                            'admin_key': ''})
+        resp = app(req.environ, self.start_response)
+        self.assertEquals(['403 Forbidden'], self.got_statuses)
+        self.assertEqual(
+            '<html><h1>Forbidden</h1>'
+            '<p>Access was denied to this resource.</p></html>', resp[0])
+
+    def test_get_admin_info(self):
+        expires = int(time.time() + 86400)
+        sig = utils.get_hmac('GET', '/info', expires, 'adminkey')
+        url = '/info?swiftinfo_sig={sig}&swiftinfo_expires={expires}'.format(
+            sig=sig, expires=expires)
+        req = Request.blank(url, environ={'REQUEST_METHOD': 'GET'})
+        app = self.get_app({'expose_info': 'true',
+                            'admin_key': 'adminkey'})
+        resp = app(req.environ, self.start_response)
+        self.assertEquals(['200 OK'], self.got_statuses)
+
+        info = json.loads(resp[0])
+        self.assertTrue('admin' in info)
+
+        self.assertTrue('swift' in info)
+        self.assertTrue('version' in info['swift'])
+        self.assertEqual(info['swift']['version'], swift_version)
+
+    def test_get_admin_info_invalid_sig(self):
+        expires = int(time.time() + 86400)
+        sig = utils.get_hmac('GET', '/info', expires, 'invalid-adminkey')
+        url = '/info?swiftinfo_sig={sig}&swiftinfo_expires={expires}'.format(
+            sig=sig, expires=expires)
+        req = Request.blank(url, environ={'REQUEST_METHOD': 'GET'})
+        app = self.get_app({'expose_info': 'true',
+                            'admin_key': 'adminkey'})
+        resp = app(req.environ, self.start_response)
+        self.assertEquals(['401 Unauthorized'], self.got_statuses)
+        self.assertEqual(
+            '<html><h1>Unauthorized</h1>'
+            '<p>This server could not verify that you are authorized to access'
+            ' the document you requested.</p></html>', resp[0])
+
+    def test_get_admin_info_invalid_expires(self):
+        expires = 1
+        sig = utils.get_hmac('GET', '/info', expires, 'adminkey')
+        url = '/info?swiftinfo_sig={sig}&swiftinfo_expires={expires}'.format(
+            sig=sig, expires=expires)
+        req = Request.blank(url, environ={'REQUEST_METHOD': 'GET'})
+        app = self.get_app({'expose_info': 'true',
+                            'admin_key': 'adminkey'})
+        resp = app(req.environ, self.start_response)
+        self.assertEquals(['401 Unauthorized'], self.got_statuses)
+        self.assertEqual(
+            '<html><h1>Unauthorized</h1>'
+            '<p>This server could not verify that you are authorized to access'
+            ' the document you requested.</p></html>', resp[0])
+
+    def test_admin_disallow_info(self):
+        expires = int(time.time() + 86400)
+        sig = utils.get_hmac('GET', '/info', expires, 'adminkey')
+        url = '/info?swiftinfo_sig={sig}&swiftinfo_expires={expires}'.format(
+            sig=sig, expires=expires)
+        req = Request.blank(url, environ={'REQUEST_METHOD': 'GET'})
+        app = self.get_app({'expose_info': 'true',
+                            'admin_key': 'adminkey',
+                            'disallowed_sections': 'foo'})
+        resp = app(req.environ, self.start_response)
+        self.assertEquals(['200 OK'], self.got_statuses)
+
+        info = json.loads(resp[0])
+
+        self.assertTrue('admin' in info)
+        self.assertTrue('disallowed_sections' in info['admin'])
+        self.assertTrue('foo' in info['admin']['disallowed_sections'])
+
+        self.assertTrue('swift' in info)
+        self.assertTrue('version' in info['swift'])
+        self.assertEqual(info['swift']['version'], swift_version)
+        self.assertTrue('foo' not in info)
+
+
 class TestController(unittest.TestCase):
 
     def setUp(self):

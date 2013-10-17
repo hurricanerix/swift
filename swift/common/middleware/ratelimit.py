@@ -17,7 +17,7 @@ from swift import gettext_ as _
 
 import eventlet
 
-from swift.common.utils import cache_from_env, get_logger
+from swift.common.utils import cache_from_env, get_logger, register_swift_info
 from swift.proxy.controllers.base import get_container_memcache_key
 from swift.common.memcached import MemcacheConnectionError
 from swift.common.swob import Request, Response
@@ -83,6 +83,7 @@ class RateLimitMiddleware(object):
     BLACK_LIST_SLEEP = 1
 
     def __init__(self, app, conf, logger=None):
+        register_swift_info('ratelimit')
         self.app = app
         if logger:
             self.logger = logger

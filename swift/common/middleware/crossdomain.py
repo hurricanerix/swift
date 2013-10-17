@@ -14,6 +14,7 @@
 # limitations under the License.
 
 from swift.common.swob import Request, Response
+from swift.common.utils import register_swift_info
 
 
 class CrossDomainMiddleware(object):
@@ -55,6 +56,7 @@ class CrossDomainMiddleware(object):
     """
 
     def __init__(self, app, conf, *args, **kwargs):
+        register_swift_info('crossdomain')
         self.app = app
         self.conf = conf
         default_domain_policy = '<allow-access-from domain="*"' \

@@ -43,12 +43,14 @@ set:
 """
 
 from swift.common.http import is_success
-from swift.proxy.controllers.base import get_container_info, get_object_info
 from swift.common.swob import Response, HTTPBadRequest, wsgify
+from swift.common.utils import register_swift_info
+from swift.proxy.controllers.base import get_container_info, get_object_info
 
 
 class ContainerQuotaMiddleware(object):
     def __init__(self, app, *args, **kwargs):
+        register_swift_info('container_quotas')
         self.app = app
 
     def bad_response(self, req, container_info):

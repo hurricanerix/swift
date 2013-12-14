@@ -62,7 +62,9 @@ utf8_decoder = codecs.getdecoder('utf-8')
 utf8_encoder = codecs.getencoder('utf-8')
 
 from swift import gettext_ as _
-from swift.common.exceptions import LockTimeout, MessageTimeout
+from swift.common.bufferedhttp import http_connect_raw
+from swift.common.exceptions import (LockTimeout, MessageTimeout,
+                                     ConnectionTimeout)
 from swift.common.http import is_success, is_redirection, HTTP_NOT_FOUND
 
 # logging doesn't import patched as cleanly as one would like
@@ -148,6 +150,37 @@ def get_hmac(request_method, path, expires, key):
 # the swift cluster.
 _swift_info = {}
 _swift_admin_info = {}
+
+
+def register_node_info(ring, timeout):
+    """
+    Registers info from a random node in the ring and marks that ring as
+    loaded.
+
+    If errors occur attempting to retrieve info from a node, a new
+    node will be selected.  It will continue like this until either it
+    finds a node which has a matching swift version, or until it has
+    tried MAX_EXTENDED_SWIFT_INFO_ATTEMPTS times.
+
+    :param ring: Ring to be used for the random selection of nodes.
+    :param timeout: Duration to wait before timing out.
+    """
+    seed = md5(str(time.time())).hexdigest()
+    partition, nodes = ring.get_nodes(seed)
+    for node in nodes:
+        try:
+            with ConnectionTimeout(timeout):
+                conn = http_connect_raw(
+                    node['ip'], node['port'], 'GET', '/info')
+                resp = conn.getresponse()
+                if is_success(resp.status):
+                    info = json.loads(resp.read())
+                    for section in info:
+                        register_swift_info(section, **info.get(section))
+                    return
+        except (Exception, Timeout):
+            pass
+    return
 
 
 def get_swift_info(admin=False, disallowed_sections=None):

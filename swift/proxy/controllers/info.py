@@ -14,7 +14,6 @@
 # limitations under the License.
 
 from time import time
-
 from swift.common.utils import public, get_hmac, get_swift_info, json, \
     streq_const_time
 from swift.proxy.controllers.base import Controller, delay_denial
@@ -51,7 +50,6 @@ class InfoController(Controller):
         return HTTPOk(request=req, headers={'Allow': 'HEAD, GET, OPTIONS'})
 
     def GETorHEAD(self, req):
-        """Handler for HTTP GET/HEAD requests."""
         """
         Handles requests to /info
         Should return a WSGI-style callable (such as swob.Response).

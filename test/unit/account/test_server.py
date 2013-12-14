@@ -17,6 +17,7 @@ import errno
 import os
 import mock
 import unittest
+from contextlib import nested
 from tempfile import mkdtemp
 from shutil import rmtree
 from StringIO import StringIO
@@ -26,10 +27,11 @@ from test.unit import FakeLogger
 import simplejson
 import xml.dom.minidom
 
-from swift.common.swob import Request
+from swift.common.swob import Request, Response
 from swift.common import constraints
 from swift.account.server import AccountController
-from swift.common.utils import normalize_timestamp, replication, public
+from swift.common.utils import (normalize_timestamp, replication, public, json,
+                                register_swift_info)
 from swift.common.request_helpers import get_sys_meta_prefix
 
 
@@ -1669,6 +1671,52 @@ class TestAccountController(unittest.TestCase):
             self.controller.logger.log_dict['info'],
             [(('1.2.3.4 - - [01/Jan/1970:02:46:41 +0000] "HEAD /sda1/p/a" 404 '
              '- "-" "-" "-" 2.0000 "-"',), {})])
+
+    def test_GET_info(self):
+        with nested(mock.patch.dict('swift.common.utils._swift_info',
+                                    clear=True),
+                    mock.patch.dict('swift.common.utils._swift_admin_info',
+                                    clear=True)):
+            controller = AccountController(
+                {'devices': self.testdir, 'mount_check': 'false'})
+
+            register_swift_info('foo', bar='baz')
+            register_swift_info('qux', admin=True, quux='corge')
+
+            path = '/info'
+            req = Request.blank(
+                path, environ={'REQUEST_METHOD': 'GET'})
+            resp = req.get_response(controller)
+
+        self.assertTrue(isinstance(resp, Response))
+        self.assertEqual('200 OK', resp.status)
+
+        info = json.loads(resp.body)
+        self.assertTrue('foo' in info)
+        self.assertTrue('bar' in info['foo'])
+        self.assertEqual(info['foo']['bar'], 'baz')
+        self.assertTrue('admin' not in info)
+
+    def test_HEAD_info(self):
+        path = '/info'
+        req = Request.blank(
+            path, environ={'REQUEST_METHOD': 'HEAD'})
+        resp = req.get_response(self.controller)
+
+        self.assertTrue(isinstance(resp, Response))
+        self.assertEqual('200 OK', resp.status)
+        self.assertEqual('', resp.body)
+
+    def test_info_unsupported_methods(self):
+        for method in ['OPTIONS', 'PUT', 'POST', 'DELETE', 'COPY']:
+            path = '/info'
+            req = Request.blank(
+                path, environ={'REQUEST_METHOD': method})
+            resp = req.get_response(self.controller)
+
+            self.assertTrue(isinstance(resp, Response))
+            self.assertEqual('405 Method Not Allowed', resp.status)
+            self.assertTrue('Method Not Allowed' in resp.body)
 
 
 if __name__ == '__main__':

@@ -29,7 +29,7 @@ from swift.common.ring import Ring
 from swift.common.utils import cache_from_env, get_logger, \
     get_remote_client, split_path, config_true_value, generate_trans_id, \
     affinity_key_function, affinity_locality_predicate, list_from_csv, \
-    register_swift_info
+    register_swift_info, register_node_info
 from swift.common.constraints import check_utf8
 from swift.proxy.controllers import AccountController, ObjectController, \
     ContainerController, InfoController
@@ -207,6 +207,10 @@ class Application(object):
             version=swift_version,
             strict_cors_mode=self.strict_cors_mode,
             **constraints.EFFECTIVE_CONSTRAINTS)
+        for ring in [self.account_ring,
+                     self.container_ring,
+                     self.object_ring]:
+            register_node_info(ring, self.conn_timeout)
 
     def check_config(self):
         """

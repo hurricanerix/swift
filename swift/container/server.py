@@ -24,6 +24,7 @@ from eventlet import Timeout
 
 import swift.common.db
 from swift.container.backend import ContainerBroker, DATADIR
+from swift import __canonical_version__ as swift_version
 from swift.common.db import DatabaseAlreadyExists
 from swift.common.container_sync_realms import ContainerSyncRealms
 from swift.common.request_helpers import get_param, get_listing_content_type, \
@@ -31,9 +32,10 @@ from swift.common.request_helpers import get_param, get_listing_content_type, \
 from swift.common.utils import get_logger, hash_path, public, \
     normalize_timestamp, storage_directory, validate_sync_to, \
     config_true_value, json, timing_stats, replication, \
-    override_bytes_from_content_type, get_log_line
-from swift.common.constraints import check_mount, check_float, check_utf8
+    override_bytes_from_content_type, get_log_line, register_swift_info, \
+    get_swift_info
 from swift.common import constraints
+from swift.common.constraints import check_mount, check_float, check_utf8
 from swift.common.bufferedhttp import http_connect
 from swift.common.exceptions import ConnectionTimeout
 from swift.common.db_replicator import ReplicatorRpc
@@ -41,15 +43,15 @@ from swift.common.http import HTTP_NOT_FOUND, is_success
 from swift.common.swob import HTTPAccepted, HTTPBadRequest, HTTPConflict, \
     HTTPCreated, HTTPInternalServerError, HTTPNoContent, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPMethodNotAllowed, Request, Response, \
-    HTTPInsufficientStorage, HTTPException, HeaderKeyDict
+    HTTPInsufficientStorage, HTTPException, HeaderKeyDict, HTTPOk
 
 
 class ContainerController(object):
     """WSGI Controller for the container server."""
 
     # Ensure these are all lowercase
-    save_headers = ['x-container-read', 'x-container-write',
-                    'x-container-sync-key', 'x-container-sync-to']
+    save_headers = set(['x-container-read', 'x-container-write',
+                        'x-container-sync-key', 'x-container-sync-to'])
 
     def __init__(self, conf, logger=None):
         self.logger = logger or get_logger(conf, log_route='container-server')
@@ -80,9 +82,12 @@ class ContainerController(object):
         self.auto_create_account_prefix = \
             conf.get('auto_create_account_prefix') or '.'
         if config_true_value(conf.get('allow_versions', 'f')):
-            self.save_headers.append('x-versions-location')
+            register_swift_info('object_versioning')
+            self.save_headers.add('x-versions-location')
         swift.common.db.DB_PREALLOCATION = \
             config_true_value(conf.get('db_preallocation', 'f'))
+        register_swift_info(version=swift_version)
+        register_swift_info(container_allowed_headers=list(self.save_headers))
 
     def _get_container_broker(self, drive, part, account, container, **kwargs):
         """
@@ -483,6 +488,18 @@ class ContainerController(object):
         self.logger.txn_id = req.headers.get('x-trans-id', None)
         if not check_utf8(req.path_info):
             res = HTTPPreconditionFailed(body='Invalid UTF8 or contains NULL')
+        elif req.path == '/info':
+            if req.method in ['HEAD', 'GET']:
+                info = json.dumps(get_swift_info())
+                content_length = len(info)
+                if req.method == 'HEAD':
+                    info = ''
+                res = HTTPOk(request=req,
+                             body=info,
+                             content_length=content_length,
+                             content_type='application/json; charset=UTF-8')
+            else:
+                res = HTTPMethodNotAllowed()
         else:
             try:
                 # disallow methods which have not been marked 'public'

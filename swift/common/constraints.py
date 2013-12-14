@@ -91,6 +91,9 @@ reload_constraints()
 # Maximum slo segments in buffer
 MAX_BUFFERED_SLO_SEGMENTS = 10000
 
+# Maximum number of times a proxy server will attempt to get extended swift
+# info from the account/container/object servers.
+MAX_EXTENDED_SWIFT_INFO_ATTEMPTS = 3
 
 #: Query string format= values to their corresponding content-type values
 FORMAT2CONTENT_TYPE = {'plain': 'text/plain', 'json': 'application/json',

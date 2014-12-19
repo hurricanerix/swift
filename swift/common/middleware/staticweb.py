@@ -43,8 +43,10 @@ Any publicly readable containers (for example, ``X-Container-Read: .r:*``, see
 :ref:`acls` for more information on this) will be checked for
 X-Container-Meta-Web-Index and X-Container-Meta-Web-Error header values::
 
-    X-Container-Meta-Web-Index  <index.name>
-    X-Container-Meta-Web-Error  <error.name.suffix>
+    X-Container-Meta-Web-Index           <index.name>
+    X-Container-Meta-Web-Error           <error.name.suffix>
+    X-Container-Meta-Web-Spa             <True/False>
+    X-Container-Meta-Web-Spa-Data-Paths  <data.paths>
 
 If X-Container-Meta-Web-Index is set, any <index.name> files will be served
 without having to specify the <index.name> part. For instance, setting
@@ -56,6 +58,14 @@ Unauthorized and 404 Not Found) will instead serve the
 .../<status.code><error.name.suffix> object. For instance, setting
 ``X-Container-Meta-Web-Error: error.html`` will serve .../404error.html for
 requests for paths not found.
+
+If X-Container-Meta-Web-SPA is set to True, All requests to objects for that
+container will serve the object container/<index.name>
+
+If X-Container-Meta-Web-SPA-Data-Paths is set, it allows a way to ignore the
+SPA routing.  The value <data.paths> respresents a comma seperated
+list of object prefixes which should ignore the X-Container-Meta-Web-Spa
+directive.
 
 For pseudo paths that have no <index.name>, this middleware can serve HTML file
 listings if you set the ``X-Container-Meta-Web-Listings: true`` metadata item
@@ -138,12 +148,14 @@ class _StaticWebContext(WSGIContext):
     the WSGI env.
     """
 
-    def __init__(self, staticweb, version, account, container, obj):
+    def __init__(self, staticweb, version, account, container, obj,
+                 allow_spa=False):
         WSGIContext.__init__(self, staticweb.app)
         self.version = version
         self.account = account
         self.container = container
         self.obj = obj
+        self.allow_spa = allow_spa
         self.app = staticweb.app
         self.agent = '%(orig)s StaticWeb'
         # Results from the last call to self._get_container_info.
@@ -183,14 +195,15 @@ class _StaticWebContext(WSGIContext):
         """
         Retrieves x-container-meta-web-index, x-container-meta-web-error,
         x-container-meta-web-listings, x-container-meta-web-listings-css,
-        and x-container-meta-web-directory-type from memcache or from the
+        x-container-meta-web-directory-type, x-container-meta-web-spa and
+        x-container-meta-web-spa-data-path from memcache or from the
         cluster and stores the result in memcache and in self._index,
         self._error, self._listings, self._listings_css and self._dir_type.
 
         :param env: The WSGI environment dict.
         """
         self._index = self._error = self._listings = self._listings_css = \
-            self._dir_type = None
+            self._dir_type = self._spa = self._spa_data_paths = None
         container_info = get_container_info(env, self.app, swift_source='SW')
         if is_success(container_info['status']):
             meta = container_info.get('meta', {})
@@ -199,6 +212,8 @@ class _StaticWebContext(WSGIContext):
             self._listings = meta.get('web-listings', '').strip()
             self._listings_css = meta.get('web-listings-css', '').strip()
             self._dir_type = meta.get('web-directory-type', '').strip()
+            self._spa = config_true_value(meta.get('web-spa', 'f'))
+            self._spa_data_paths = meta.get('web-spa-data-paths', '').strip()
 
     def _listing(self, env, start_response, prefix=None):
         """
@@ -384,6 +399,7 @@ class _StaticWebContext(WSGIContext):
         resp = self._app_call(tmp_env)
         status_int = self._get_status_int()
         self._get_container_info(env)
+
         if is_success(status_int) or is_redirection(status_int):
             # Treat directory marker objects as not found
             if not self._dir_type:
@@ -397,6 +413,7 @@ class _StaticWebContext(WSGIContext):
                 start_response(self._response_status, self._response_headers,
                                self._response_exc_info)
                 return resp
+
         if status_int != HTTP_NOT_FOUND:
             # Retaining the previous code's behavior of not using custom error
             # pages for non-404 errors.
@@ -425,6 +442,32 @@ class _StaticWebContext(WSGIContext):
                 start_response(self._response_status, self._response_headers,
                                self._response_exc_info)
                 return resp
+
+            if self.allow_spa and self._spa:
+                (version, account, container, obj) = \
+                    split_path(env['PATH_INFO'], 2, 4, True)
+                data_paths = self._spa_data_paths.replace(' ', '').split(',')
+                for path in data_paths:
+                    if obj.startswith('{0}'.format(path)):
+                        if env['PATH_INFO'][-1] == '/':
+                            return self._listing(env, start_response, self.obj)
+                        resp = self._app_call(tmp_env)
+                        status_int = self._get_status_int()
+                        start_response(self._response_status, self._response_headers,
+                            self._response_exc_info)
+                        return resp
+                tmp_env = dict(env)
+                tmp_env['HTTP_USER_AGENT'] = \
+                    '%s StaticWeb' % env.get('HTTP_USER_AGENT')
+                tmp_env['swift.source'] = 'SW'
+                tmp_env['PATH_INFO'] = '/{0}/{1}/{2}/{3}'.format(
+                    version, account, container, self._index)
+                resp = self._app_call(tmp_env)
+                status_int = self._get_status_int()
+                start_response(self._response_status, self._response_headers,
+                               self._response_exc_info)
+                return resp
+
         if status_int == HTTP_NOT_FOUND:
             if env['PATH_INFO'][-1] != '/':
                 tmp_env = make_pre_authed_env(
@@ -482,7 +525,9 @@ class StaticWeb(object):
             return self.app(env, start_response)
         if not container:
             return self.app(env, start_response)
-        context = _StaticWebContext(self, version, account, container, obj)
+        allow_spa = config_true_value(self.conf.get('allow_spa', 'f'))
+        context = _StaticWebContext(self, version, account, container, obj,
+                                    allow_spa=allow_spa)
         if obj:
             return context.handle_object(env, start_response)
         return context.handle_container(env, start_response)

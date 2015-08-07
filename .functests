@@ -1,10 +1,12 @@
 #!/bin/bash
 
 SRC_DIR=$(python -c "import os; print os.path.dirname(os.path.realpath('$0'))")
+set -e
 
-cd ${SRC_DIR}/test/functional
-nosetests --exe $@
-rvalue=$?
+cd ${SRC_DIR}
+export OS_TEST_PATH='test.functional'
+python setup.py testr --testr-args="--concurrency=1"
 cd -
 
+rvalue=$?
 exit $rvalue

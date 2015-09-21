@@ -584,6 +584,19 @@ use = egg:swift#proxy_logging
 # not in this list will have "BAD_METHOD" for the <verb> portion of the metric.
 # log_statsd_valid_http_methods = GET,HEAD,POST,PUT,DELETE,COPY,OPTIONS
 #
+# To have greater control over how requests are logged, you can specify
+# the max length for various fields in the logs.
+# method_max_len=10
+# path_non_resource_max_len=100
+# path_account_name_leading_len=5
+# path_account_name_max_len=0
+# path_container_name_leading_len=5
+# path_container_name_max_len=20
+# path_object_name_leading_len=5
+# path_object_name_max_len=0
+# query_max_len=10
+# user_agent_max_len=10
+#
 # Note: The double proxy-logging in the pipeline is not a mistake. The
 # left-most proxy-logging is there to log requests that were handled in
 # middleware and never made it through to the right-most middleware (and

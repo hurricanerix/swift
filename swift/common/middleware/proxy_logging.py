@@ -81,6 +81,7 @@ from swift.common.utils import (get_logger, get_remote_client,
                                 InputProxy, list_from_csv, get_policy_index)
 
 from swift.common.storage_policy import POLICIES
+from swift.common.utils import split_path
 
 QUOTE_SAFE = '/:'
 
@@ -123,6 +124,17 @@ class ProxyLoggingMiddleware(object):
         self.reveal_sensitive_prefix = int(
             conf.get('reveal_sensitive_prefix', 16))
 
+        self.method_max_len = int(conf.get('method_max_len', 10))
+        self.path_non_resource_max_len = int(conf.get('path_non_resource_max_len', 100))
+        self.path_account_name_leading_len = int(conf.get('path_account_name_leading_len', 5))
+        self.path_account_name_max_len = int(conf.get('path_account_name_max_len', 0))
+        self.path_container_name_leading_len = int(conf.get('path_container_name_leading_len', 5))
+        self.path_container_name_max_len = int(conf.get('path_container_name_max_len', 0))
+        self.path_object_name_leading_len = int(conf.get('path_object_name_leading_len', 10))
+        self.path_object_name_max_len = int(conf.get('path_object_name_max_len', 0))
+        self.query_max_len = int(conf.get('query_max_len', 500))
+        self.user_agent_max_len = int(conf.get('user_agent_max_len', 500))
+
     def method_from_req(self, req):
         return req.environ.get('swift.orig_req_method', req.method)
 
@@ -131,6 +143,86 @@ class ProxyLoggingMiddleware(object):
 
     def mark_req_logged(self, env):
         env['swift.proxy_access_log_made'] = True
+
+    def truncate(self, s, max_len=0):
+        """Truncate s to at most max_len + 3 chars.
+        If s was truncated, '...' will be appended to the
+        returned string.
+
+        :param s: string to be truncated 
+        :param max_len: max number of chars to return from s
+
+        :returns: the truncated string.
+        """
+        if max_len == 0 or len(s) < max_len:
+            return s
+        return '{0}...'.format(s[:max_len])
+
+    def truncate_name(self, name, leading=10, max_len=0):
+        """Truncates a name leaving leading chars at the begining or the name
+        and (max_len - leading) chars at the end, seperated by the chars '...'.
+        if the length of name is less than max_len, then the unaltered name is
+        returned.
+        
+        :param name: name to be truncated
+        :param leading: number of chars to be left at the front of the name
+                        in the event that the name is truncated
+        :param max_len: the total number of chars from the name to return
+
+        :returns: the truncated name
+        """
+        if max_len == 0 or len(name) < max_len:
+            return name
+        return '{0}...{1}'.format(name[:leading], name[-max_len + leading:])
+
+    def truncate_path_and_query(self, path):
+        """Split the path into the following pieces: [account, container,
+        object and query], truncating their length if needed.
+        account/container/object names will be truncated in the middle.
+        all other paths and the query string will be truncated from the end.
+
+        :param path: path, possibly including a query string, to be truncated.
+        :returns: the truncated path and query string.
+        """
+        query = None
+        if '?' in path:
+            path, query = path.split('?', 1)
+            query = self.truncate(query, self.query_max_len)
+
+        try:
+            parts = split_path(path, minsegs=2, maxsegs=4, rest_with_last=True) 
+        except ValueError:
+            # Not a path to a account/container/object resource.
+            path = self.truncate(path, self.path_non_resource_max_len)
+            if query:
+                path = '{0}?{1}'.format(path, query)
+            return path
+            
+        # Account 
+        if (self.path_account_name_max_len != 0 and
+            len(parts[1]) > self.path_account_name_max_len):
+            parts[1] = self.truncate_name(parts[1],
+                                          self.path_account_name_leading_len,
+                                          self.path_account_name_max_len)
+        # Container 
+        if (parts[2] is not None and
+            self.path_container_name_max_len != 0 and
+            len(parts[2]) > self.path_container_name_max_len):
+            parts[2] = self.truncate_name(parts[2],
+                                          self.path_container_name_leading_len,
+                                          self.path_container_name_max_len)
+        # Object
+        if (parts[3] is not None and
+            self.path_object_name_max_len != 0 and
+            len(parts[3]) > self.path_object_name_max_len):
+            parts[3] = self.truncate_name(parts[3],
+                                          self.path_object_name_leading_len,
+                                          self.path_object_name_max_len)
+
+        path = '/{0}'.format('/'.join([p for p in parts if p is not None]))
+        if query:
+            path = '{0}?{1}'.format(path, query)
+        return path
 
     def obscure_sensitive(self, value):
         if value and len(value) > self.reveal_sensitive_prefix:
@@ -178,12 +270,12 @@ class ProxyLoggingMiddleware(object):
                 get_remote_client(req),
                 req.remote_addr,
                 end_gmtime_str,
-                method,
-                the_request,
+                self.truncate(method, max_len=self.method_max_len),
+                self.truncate_path_and_query(the_request),
                 req.environ.get('SERVER_PROTOCOL'),
                 status_int,
                 req.referer,
-                req.user_agent,
+                self.truncate(req.user_agent, max_len=self.user_agent_max_len),
                 self.obscure_sensitive(req.headers.get('x-auth-token')),
                 bytes_received,
                 bytes_sent,
